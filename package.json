@@ -1,0 +1,32 @@
+{
+  "name": "rfid-student-verification-backend",
+  "version": "1.0.0",
+  "description": "REST API backend for IoT RFID Student Verification System",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "rfid",
+    "iot",
+    "express",
+    "mongodb",
+    "student-verification"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.19.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validator": "^7.2.0",
+    "mongoose": "^8.6.1",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
