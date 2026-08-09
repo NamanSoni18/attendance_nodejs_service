@@ -1,5 +1,7 @@
 const axios = require('axios');
 const Student = require('../models/Student');
+const fs = require('fs');     // Built-in File System module
+const path = require('path'); // Built-in Path module
 
 exports.verifyAttendance = async (req, res) => {
     try {
@@ -13,7 +15,7 @@ exports.verifyAttendance = async (req, res) => {
 
         console.log(`[STEP 1] ESP32 Sent RFID: ${rfid_uid}`);
 
-        // Search MongoDB for the student using 'uid' (as per your DB structure)
+        // Search MongoDB for the student using 'uid'
         const student = await Student.findOne({ uid: rfid_uid });
         
         if (!student) {
@@ -26,7 +28,38 @@ exports.verifyAttendance = async (req, res) => {
             return res.status(200).json({ status: "Rejected", message: "No Face in DB" });
         }
 
-        console.log(`[STEP 2] Student Found: ${student.name}. Forwarding to Python ML...`);
+        console.log(`[STEP 2] Student Found: ${student.name}.`);
+
+        // =======================================================
+        // NEW FEATURE: SAVE THE IMAGE TO THE NODE.JS SERVER DISK
+        // =======================================================
+        try {
+            // 1. Define the directory path (e.g., backend/uploads/attendance_captures)
+            const uploadDir = path.join(__dirname, '../uploads/attendance_captures');
+            
+            // 2. Create the folder if it doesn't exist yet
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+
+            // 3. Create a unique filename: Name_RollNo_Timestamp.jpg
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const safeName = student.name.replace(/\s+/g, '_'); // Replace spaces with underscores
+            const filename = `${safeName}_${student.rollNo}_${timestamp}.jpg`;
+            const filepath = path.join(uploadDir, filename);
+
+            // 4. Convert Base64 back to binary image data and save it
+            const imageBuffer = Buffer.from(image_base64, 'base64');
+            fs.writeFileSync(filepath, imageBuffer);
+            
+            console.log(`[IMAGE SAVED] Successfully saved to: ${filepath}`);
+        } catch (fileError) {
+            console.error("[FILE ERROR] Could not save the image:", fileError.message);
+            // We won't return an error here, so the verification process can still continue even if saving fails.
+        }
+        // =======================================================
+
+        console.log(`[STEP 3] Forwarding to Python ML for Face Match...`);
 
         // Send to Python ML Microservice
         try {
@@ -39,7 +72,7 @@ exports.verifyAttendance = async (req, res) => {
             const mlData = mlResponse.data;
 
             if (mlData.is_match) {
-                console.log(`[STEP 3] SUCCESS: Face matches ${student.name}! Confidence: ${mlData.confidence}`);
+                console.log(`[STEP 4] SUCCESS: Face matches ${student.name}! Confidence: ${mlData.confidence}`);
                 return res.status(200).json({
                     status: "Success",
                     student: { 
@@ -49,12 +82,11 @@ exports.verifyAttendance = async (req, res) => {
                     }
                 });
             } else {
-                console.log(`[STEP 3] PROXY DETECTED: Face does NOT match ${student.name}. Confidence: ${mlData.confidence}`);
+                console.log(`[STEP 4] PROXY DETECTED: Face does NOT match ${student.name}. Confidence: ${mlData.confidence}`);
                 return res.status(200).json({ status: "Rejected", message: "Face Mismatch" });
             }
 
         } catch (mlError) {
-            // Catches Python errors (e.g., YOLO didn't detect a face)
             if (mlError.response && mlError.response.status === 400) {
                 console.log(`[PYTHON ERROR] ${mlError.response.data.detail}`);
                 return res.status(200).json({ status: "Rejected", message: "No Face Found" });
