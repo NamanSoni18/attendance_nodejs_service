@@ -11,6 +11,26 @@ const handleDuplicateKeyError = (error) => {
   }
 };
 
+const enrollFace = async (req, res) => {
+    const { rfid_uid, new_embedding } = req.body; // new_embedding comes from your ML service
+    
+    try {
+        // CHANGED: Use $push to append the new embedding to the array
+        const student = await Student.findOneAndUpdate(
+            { uid: rfid_uid },
+            { $push: { face_embeddings: new_embedding } },
+            { new: true }
+        );
+        
+        if (!student) {
+            return res.status(404).json({ message: "Student not found" });
+        }
+        res.status(200).json({ status: "Success", message: "Face added to profile", student });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 const enrollStudent = async (req, res) => {
     try {
         const { name, rollNo, department, rfid_uid, image_base64 } = req.body;
@@ -231,5 +251,6 @@ module.exports = {
   getStudentByUID,
   updateStudent,
   deleteStudent,
-  enrollStudent
+  enrollStudent,
+  enrollFace,
 };

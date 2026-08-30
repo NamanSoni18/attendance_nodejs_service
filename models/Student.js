@@ -1,13 +1,12 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
 const studentSchema = new mongoose.Schema({
-  student_id: { type: String, required: true },
-  name: { type: String, required: true },
-  rollNo: { type: String, required: true },
-  department: { type: String, required: true },
-  rfid_uid: { type: String, required: true, unique: true },
-  face_embedding: { type: [Number], default: [] },
-  createdAt: { type: Date, default: Date.now },
-});
+    uid: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
+    rollNo: { type: String, required: true },
+    department: { type: String, required: true },
+    // CHANGED: 'face_embedding' is now 'face_embeddings' (Array of Arrays)
+    face_embeddings: { type: [[Number]], default: [] } 
+}, { timestamps: true });
 
-module.exports = mongoose.model("Student", studentSchema);
+module.exports = mongoose.model('Student', studentSchema);
