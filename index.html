@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laptop Smart Attendance</title>
+    <!-- Include Socket.io client -->
+    <script src="http://127.0.0.1:5000/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; }
+        video { border: 4px solid #333; border-radius: 8px; width: 640px; height: 480px; background: #000; }
+        #status { margin-top: 20px; font-size: 1.2em; font-weight: bold; padding: 15px; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+
+    <h1>Attendance Camera</h1>
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="status">Waiting for RFID scan...</div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const statusDiv = document.getElementById('status');
+        const context = canvas.getContext('2d');
+
+        // Use localhost if running the backend and frontend on the same laptop
+        const SERVER_URL = 'http://127.0.0.1:5000'; 
+        const socket = io(SERVER_URL);
+
+        // --- NEW: Socket Connection Debugging ---
+        socket.on('connect', () => {
+            console.log('✅ Connected to Node.js Socket.io server!');
+            statusDiv.innerHTML = "Connected! Waiting for RFID scan...";
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error('❌ Socket connection error:', err);
+            statusDiv.innerHTML = "Connection Error. Check console.";
+            statusDiv.className = "error";
+        });
+
+        // 1. Start Webcam
+        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+            .then(stream => { 
+                console.log('✅ Webcam access granted.');
+                video.srcObject = stream; 
+            })
+            .catch(err => { 
+                console.error('❌ Webcam error:', err);
+                statusDiv.innerHTML = "Webcam error: " + err.message; 
+                statusDiv.className = "error";
+            });
+
+        // 2. Listen for the ESP32 Trigger
+        socket.on('capture_face', async (data) => {
+            console.log('🔔 Trigger received from server:', data);
+            const uid = data.rfid_uid;
+            statusDiv.innerHTML = `RFID ${uid} scanned! Capturing face...`;
+            statusDiv.className = "";
+
+            // Capture the frame
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert to Base64
+            let base64Image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+            console.log('📸 Photo captured, sending to /api/verify...');
+
+            statusDiv.innerHTML = "Verifying with server...";
+
+            // 3. Send to verification endpoint
+            try {
+                const response = await fetch(`${SERVER_URL}/api/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rfid_uid: uid, image_base64: base64Image })
+                });
+
+                const result = await response.json();
+                console.log('📥 Server Response:', result);
+
+                if(result.status === "Success") {
+                    statusDiv.innerHTML = `Access Granted: ${result.student.name} (Roll: ${result.student.rollNo})`;
+                    statusDiv.className = "success";
+                } else {
+                    statusDiv.innerHTML = `Rejected: ${result.message}`;
+                    statusDiv.className = "error";
+                }
+            } catch (err) {
+                console.error('❌ Fetch error:', err);
+                statusDiv.innerHTML = "Server connection failed.";
+                statusDiv.className = "error";
+            }
+
+            // Reset after 5 seconds
+            setTimeout(() => {
+                statusDiv.innerHTML = "Waiting for RFID scan...";
+                statusDiv.className = "";
+            }, 5000);
+        });
+    </script>
+</body>
+</html>
