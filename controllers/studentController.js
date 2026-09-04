@@ -57,7 +57,7 @@ const enrollStudent = async (req, res) => {
                 rollNo: rollNo, 
                 department: department, 
                 uid: rfid_uid, 
-                face_embedding: face_embedding // The 512-D array from Python
+                face_embeddings: [face_embedding] // The 512-D array from Python stored as an array of embeddings
             },
             { new: true, upsert: true } // Update if exists, create new if not
         );
