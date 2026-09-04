@@ -10,6 +10,7 @@ const connectDB = require("./config/db");
 const studentRoutes = require("./routes/studentRoutes");
 const verifyRoutes = require("./routes/verifyRoutes");
 const errorHandler = require("./middleware/errorHandler");
+const { waitForAttendanceResult } = require("./utils/pendingAttendance");
 
 dotenv.config();
 
@@ -28,13 +29,16 @@ app.get("/", (req, res) => {
   res.status(200).json({ message: "RFID Student API Running" });
 });
 
-app.post('/api/rfid-trigger', (req, res) => {
+app.post('/api/rfid-trigger', async (req, res) => {
     const { rfid_uid } = req.body;
     if (rfid_uid) {
         console.log(`[RFID] Trigger received for UID: ${rfid_uid}`);
-        // Broadcast to the laptop frontend to take a picture
+
+      const resultPromise = waitForAttendanceResult(rfid_uid);
         io.emit('capture_face', { rfid_uid });
-        res.status(200).json({ status: "Success", message: "Laptop triggered" });
+
+      const result = await resultPromise;
+      res.status(result.status === 'Error' ? 504 : 200).json(result);
     } else {
         res.status(400).json({ error: "No UID provided" });
     }

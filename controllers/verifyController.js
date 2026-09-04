@@ -2,6 +2,7 @@ const axios = require('axios');
 const Student = require('../models/Student');
 const fs = require('fs');     // Built-in File System module
 const path = require('path'); // Built-in Path module
+const { resolveAttendanceResult } = require('../utils/pendingAttendance');
 
 const SCAN_LOG_PATH = path.join(__dirname, '../data/scan_results.json');
 const RFID_LOG_PATH = path.join(__dirname, '../data/rfid_distance_accuracy.json');
@@ -125,6 +126,11 @@ const getStudentEmbeddings = (student) => {
     return [];
 };
 
+const sendVerificationResult = (res, uid, result, statusCode = 200) => {
+    resolveAttendanceResult(uid, result);
+    return res.status(statusCode).json(result);
+};
+
 exports.verifyAttendance = async (req, res) => {
     try {
         console.log("\n--- NEW SCAN RECEIVED ---");
@@ -159,14 +165,19 @@ exports.verifyAttendance = async (req, res) => {
         
         if (!student) {
             console.log(`[STEP 2] REJECTED: Card ${rfid_uid} is not in the database.`);
-            return res.status(200).json({ status: "Rejected", message: "Unknown Card" });
+            return sendVerificationResult(res, rfid_uid, { status: "Rejected", message: "Unknown Card" });
         }
 
         const studentEmbeddings = getStudentEmbeddings(student);
 
         if (studentEmbeddings.length === 0) {
             console.log(`[STEP 2] REJECTED: ${student.name} exists, but has no face embedding in DB!`);
-            return res.status(200).json({ status: "Rejected", message: "No Face in DB" });
+            return sendVerificationResult(res, rfid_uid, {
+                status: "Rejected",
+                name: student.name,
+                roll_no: student.rollNo,
+                message: "No Face in DB"
+            });
         }
 
         console.log(`[STEP 2] Student Found: ${student.name}.`);
@@ -231,10 +242,12 @@ exports.verifyAttendance = async (req, res) => {
                     read_accuracy_percent: read_accuracy_percent ?? accuracy_percent ?? (Number(confidence) * 100),
                     accuracy_percent: accuracy_percent ?? read_accuracy_percent ?? (Number(confidence) * 100)
                 });
-                return res.status(200).json({
+                return sendVerificationResult(res, rfid_uid, {
                     status: "Success",
-                    student: { 
-                        name: student.name, 
+                    name: student.name,
+                    roll_no: student.rollNo,
+                    student: {
+                        name: student.name,
                         rollNo: student.rollNo,
                         department: student.department || "MCA"
                     }
@@ -255,20 +268,30 @@ exports.verifyAttendance = async (req, res) => {
                     read_accuracy_percent: read_accuracy_percent ?? accuracy_percent ?? Math.max(0, (Number(confidence) * 100)),
                     accuracy_percent: accuracy_percent ?? read_accuracy_percent ?? Math.max(0, (Number(confidence) * 100))
                 });
-                return res.status(200).json({ status: "Rejected", message: "Face Mismatch" });
+                return sendVerificationResult(res, rfid_uid, {
+                    status: "Rejected",
+                    name: student.name,
+                    roll_no: student.rollNo,
+                    message: "Face Mismatch"
+                });
             }
 
         } catch (mlError) {
             if (mlError.response && mlError.response.status === 400) {
                 console.log(`[PYTHON ERROR] ${mlError.response.data.detail}`);
-                return res.status(200).json({ status: "Rejected", message: "No Face Found" });
+                return sendVerificationResult(res, rfid_uid, {
+                    status: "Rejected",
+                    name: student.name,
+                    roll_no: student.rollNo,
+                    message: "No Face Found"
+                });
             }
             console.log(`[PYTHON ERROR] Python server is unreachable. Is Uvicorn running?`);
-            return res.status(500).json({ status: "Error", message: "ML Server Offline" });
+            return sendVerificationResult(res, rfid_uid, { status: "Error", message: "ML Server Offline" }, 500);
         }
 
     } catch (error) {
         console.error("[SERVER ERROR]", error.message);
-        return res.status(500).json({ status: "Error", message: "Server Error" });
+        return sendVerificationResult(res, rfid_uid, { status: "Error", message: "Server Error" }, 500);
     }
 };

@@ -405,5 +405,38 @@
     "threshold": 0.68,
     "message": "Face mismatch.",
     "scanned_at": "2026-08-30T19:48:43.209Z"
+  },
+  {
+    "scan_id": "scan_1788518865214",
+    "uid": "15552503",
+    "name": "Naman Soni",
+    "result": "rejected",
+    "accepted": false,
+    "confidence": 0.116216741502285,
+    "threshold": 0.68,
+    "message": "Face mismatch.",
+    "scanned_at": "2026-09-04T10:47:45.214Z"
+  },
+  {
+    "scan_id": "scan_1788518898244",
+    "uid": "15552503",
+    "name": "Naman Soni",
+    "result": "accepted",
+    "accepted": true,
+    "confidence": 0.7929821014404297,
+    "threshold": 0.68,
+    "message": "Face matches student.",
+    "scanned_at": "2026-09-04T10:48:18.244Z"
+  },
+  {
+    "scan_id": "scan_1788520240339",
+    "uid": "15552503",
+    "name": "Naman Soni",
+    "result": "accepted",
+    "accepted": true,
+    "confidence": 0.826081395149231,
+    "threshold": 0.68,
+    "message": "Face matches student.",
+    "scanned_at": "2026-09-04T11:10:40.339Z"
   }
 ]
