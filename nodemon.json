@@ -10,7 +10,9 @@
   ],
   "ignore": [
     "data/**",
+    "uploads",
     "uploads/**",
+    "**/uploads/**",
     "node_modules",
     ".git"
   ],

@@ -5,31 +5,74 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Laptop Smart Attendance</title>
     <!-- Include Socket.io client -->
-    <script src="http://127.0.0.1:5000/socket.io/socket.io.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; }
-        video { border: 4px solid #333; border-radius: 8px; width: 640px; height: 480px; background: #000; }
+        body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 24px; }
+        video, #selected-image { border: 4px solid #333; border-radius: 8px; width: min(640px, 100%); height: auto; min-height: 240px; background: #000; object-fit: contain; }
+        #selected-image { display: none; }
+        .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 20px auto; max-width: 700px; }
+        input, button { font: inherit; padding: 10px 14px; border-radius: 6px; border: 1px solid #999; }
+        input[type="text"] { min-width: 220px; }
+        button { cursor: pointer; background: #1769aa; color: #fff; border: 0; }
+        button:hover { background: #125487; }
+        button:disabled { cursor: not-allowed; opacity: 0.6; }
+        .file-label { cursor: pointer; background: #555; color: #fff; padding: 10px 14px; border-radius: 6px; }
+        .file-label:hover { background: #333; }
+        #gallery-input { display: none; }
         #status { margin-top: 20px; font-size: 1.2em; font-weight: bold; padding: 15px; }
         .success { color: green; }
         .error { color: red; }
+        .modal { display: none; position: fixed; inset: 0; z-index: 10; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.55); }
+        .modal.visible { display: flex; }
+        .modal-card { width: min(420px, 100%); padding: 24px; border-radius: 10px; background: #fff; text-align: left; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3); }
+        .modal-card.success-border { border-top: 6px solid green; }
+        .modal-card.error-border { border-top: 6px solid red; }
+        .modal-card h2 { margin-top: 0; }
+        .modal-details { margin: 16px 0; line-height: 1.7; }
+        .modal-details strong { display: inline-block; min-width: 100px; }
+        #close-modal { display: block; margin-left: auto; }
     </style>
 </head>
 <body>
 
     <h1>Attendance Camera</h1>
     <video id="webcam" autoplay playsinline></video>
+    <img id="selected-image" alt="Selected gallery image preview">
     <canvas id="canvas" style="display:none;"></canvas>
+    <div class="controls">
+        <input id="rfid-uid" type="text" placeholder="Enter RFID UID for manual scan" aria-label="RFID UID">
+        <button id="capture-button" type="button">Capture &amp; Verify</button>
+        <label class="file-label" id="gallery-label" for="gallery-input">Upload from Gallery</label>
+        <input id="gallery-input" type="file" accept="image/*">
+    </div>
     <div id="status">Waiting for RFID scan...</div>
+    <div id="result-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div id="modal-card" class="modal-card">
+            <h2 id="modal-title"></h2>
+            <div id="modal-details" class="modal-details"></div>
+            <button id="close-modal" type="button">Close</button>
+        </div>
+    </div>
 
     <script>
         const video = document.getElementById('webcam');
         const canvas = document.getElementById('canvas');
+        const selectedImage = document.getElementById('selected-image');
+        const rfidInput = document.getElementById('rfid-uid');
+        const captureButton = document.getElementById('capture-button');
+        const galleryLabel = document.getElementById('gallery-label');
+        const galleryInput = document.getElementById('gallery-input');
         const statusDiv = document.getElementById('status');
+        const resultModal = document.getElementById('result-modal');
+        const modalCard = document.getElementById('modal-card');
+        const modalTitle = document.getElementById('modal-title');
+        const modalDetails = document.getElementById('modal-details');
+        const closeModal = document.getElementById('close-modal');
         const context = canvas.getContext('2d');
 
-        // Use localhost if running the backend and frontend on the same laptop
-        const SERVER_URL = 'http://127.0.0.1:5000'; 
-        const socket = io(SERVER_URL);
+        // The page and API use the same Node.js origin when opened at http://127.0.0.1:5000.
+        const SERVER_URL = window.location.origin;
+        const socket = io();
 
         // --- NEW: Socket Connection Debugging ---
         socket.on('connect', () => {
@@ -43,7 +86,7 @@
             statusDiv.className = "error";
         });
 
-        // 1. Start Webcam
+        // 1. Start Webcam. Gallery uploads remain available if camera access is denied.
         navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
             .then(stream => { 
                 console.log('✅ Webcam access granted.');
@@ -55,26 +98,96 @@
                 statusDiv.className = "error";
             });
 
-        // 2. Listen for the ESP32 Trigger
-        socket.on('capture_face', async (data) => {
-            console.log('🔔 Trigger received from server:', data);
-            const uid = data.rfid_uid;
-            statusDiv.innerHTML = `RFID ${uid} scanned! Capturing face...`;
-            statusDiv.className = "";
+        function setStatus(message, className = "") {
+            statusDiv.innerHTML = message;
+            statusDiv.className = className;
+        }
 
-            // Capture the frame
+        function setImageControlsEnabled(enabled) {
+            captureButton.disabled = !enabled;
+            galleryInput.disabled = !enabled;
+            galleryLabel.style.opacity = enabled ? "1" : "0.6";
+            galleryLabel.style.cursor = enabled ? "pointer" : "not-allowed";
+        }
+
+        function showResultPopup({ success, uid, name, message }) {
+            modalCard.className = `modal-card ${success ? "success-border" : "error-border"}`;
+            modalTitle.textContent = success ? "Attendance Verified" : "Attendance Rejected";
+            modalDetails.replaceChildren();
+
+            const details = [
+                ["Status", success ? "Face matched" : "Face mismatch"],
+                ["Name", name || "Unknown"],
+                ["RFID UID", uid || "Unknown"],
+                ["Mismatch / Reason", message || (success ? "No mismatch" : "Verification rejected.")]
+            ];
+
+            details.forEach(([label, value]) => {
+                const row = document.createElement("div");
+                const labelElement = document.createElement("strong");
+                labelElement.textContent = `${label}:`;
+                row.append(labelElement, document.createTextNode(` ${value}`));
+                modalDetails.appendChild(row);
+            });
+
+            resultModal.classList.add("visible");
+            resultModal.style.display = "flex";
+            resultModal.setAttribute("aria-hidden", "false");
+        }
+
+        function hideResultPopup() {
+            resultModal.classList.remove("visible");
+            resultModal.style.display = "none";
+            resultModal.setAttribute("aria-hidden", "true");
+        }
+
+        function captureVideoFrame() {
+            if (!video.videoWidth || !video.videoHeight) {
+                throw new Error("The camera is not ready yet.");
+            }
+
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to Base64
-            let base64Image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
-            console.log('📸 Photo captured, sending to /api/verify...');
+        }
 
-            statusDiv.innerHTML = "Verifying with server...";
+        function loadGalleryImage(file) {
+            return new Promise((resolve, reject) => {
+                const objectUrl = URL.createObjectURL(file);
+                const image = new Image();
+                image.onload = () => {
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+                    context.drawImage(image, 0, 0);
+                    selectedImage.src = objectUrl;
+                    selectedImage.style.display = "block";
+                    video.style.display = "none";
+                    URL.revokeObjectURL(objectUrl);
+                    resolve();
+                };
+                image.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error("The selected file could not be read."));
+                };
+                image.src = objectUrl;
+            });
+        }
 
-            // 3. Send to verification endpoint
+        async function verifyImage(uid, captureImage) {
+            if (!uid) {
+                setStatus("Enter an RFID UID before verifying.", "error");
+                return;
+            }
+
+            setImageControlsEnabled(false);
+            setStatus("Preparing image...");
+
             try {
+                await captureImage();
+                const base64Image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                console.log('📸 Image ready, sending to /api/verify...');
+                setStatus("Verifying with server...");
+
                 const response = await fetch(`${SERVER_URL}/api/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -83,26 +196,128 @@
 
                 const result = await response.json();
                 console.log('📥 Server Response:', result);
+                const resultName = result.student?.name || result.name;
+                const isSuccessful = String(result.status || "").toLowerCase() === "success";
 
-                if(result.status === "Success") {
-                    statusDiv.innerHTML = `Access Granted: ${result.student.name} (Roll: ${result.student.rollNo})`;
-                    statusDiv.className = "success";
+                if(isSuccessful) {
+                    console.log('✅ Successful verification:', {
+                        uid,
+                        name: resultName || "Unknown",
+                        rollNo: result.student?.rollNo || result.roll_no || "N/A",
+                        response: result
+                    });
+                    setStatus(`Access Granted: ${resultName} (Roll: ${result.student?.rollNo || result.roll_no || "N/A"})`, "success");
+                    showResultPopup({
+                        success: true,
+                        uid,
+                        name: resultName,
+                        message: result.message || "Face matches student."
+                    });
                 } else {
-                    statusDiv.innerHTML = `Rejected: ${result.message}`;
-                    statusDiv.className = "error";
+                    setStatus(`Rejected: ${result.message}`, "error");
+                    showResultPopup({
+                        success: false,
+                        uid,
+                        name: resultName,
+                        message: result.message
+                    });
                 }
             } catch (err) {
                 console.error('❌ Fetch error:', err);
-                statusDiv.innerHTML = "Server connection failed.";
-                statusDiv.className = "error";
+                setStatus(err.message === "The camera is not ready yet." ? err.message : "Server connection failed.", "error");
+            } finally {
+                setImageControlsEnabled(true);
             }
 
-            // Reset after 5 seconds
-            setTimeout(() => {
-                statusDiv.innerHTML = "Waiting for RFID scan...";
-                statusDiv.className = "";
-            }, 5000);
+        }
+
+        captureButton.addEventListener('click', () => {
+            selectedImage.style.display = "none";
+            video.style.display = "inline-block";
+            verifyImage(rfidInput.value.trim(), captureVideoFrame);
         });
+
+        // RFID readers often behave like keyboards and append an Enter key.
+        // Prevent that key from triggering browser navigation or submission.
+        rfidInput.addEventListener('keydown', (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                event.stopPropagation();
+                console.log('RFID UID entered:', rfidInput.value.trim());
+            }
+        });
+
+        galleryInput.addEventListener('change', async () => {
+            const file = galleryInput.files[0];
+            if (!file) return;
+
+            if (!file.type.startsWith("image/")) {
+                setStatus("Please select an image file.", "error");
+                galleryInput.value = "";
+                return;
+            }
+
+            try {
+                await verifyImage(rfidInput.value.trim(), () => loadGalleryImage(file));
+            } finally {
+                galleryInput.value = "";
+            }
+        });
+
+        // Keep RFID reader keystrokes and file-picker activity from navigating/reloading the page.
+        document.addEventListener('submit', (event) => {
+            event.preventDefault();
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (
+                event.key === "Enter" &&
+                event.target !== rfidInput &&
+                !(event.target instanceof HTMLButtonElement)
+            ) {
+                event.preventDefault();
+            }
+        });
+
+        closeModal.addEventListener('click', hideResultPopup);
+        resultModal.addEventListener('click', (event) => {
+            if (event.target === resultModal) hideResultPopup();
+        });
+
+        window.addEventListener('beforeunload', () => {
+            console.warn('⚠️ Attendance page is being unloaded.', {
+                url: window.location.href,
+                reason: 'Check the browser navigation/reload controls or the RFID reader key input.'
+            });
+        });
+
+        let lastRfidUid = "";
+        let lastRfidScanAt = 0;
+
+        // 2. Listen for the ESP32 Trigger. The user chooses camera or gallery.
+        socket.on('capture_face', (data) => {
+            console.log('🔔 Trigger received from server:', data);
+            const uid = String(data?.rfid_uid || "").trim();
+            const now = Date.now();
+
+            if (!uid) {
+                console.warn("⚠️ RFID event did not contain a UID.");
+                return;
+            }
+
+            if (uid === lastRfidUid && now - lastRfidScanAt < 2000) {
+                console.log("Ignoring duplicate RFID event:", uid);
+                return;
+            }
+
+            lastRfidUid = uid;
+            lastRfidScanAt = now;
+            rfidInput.value = uid;
+            setImageControlsEnabled(true);
+            setStatus(`RFID ${uid} scanned. Capture a photo or upload one from the gallery.`);
+        });
+
+        setImageControlsEnabled(true);
     </script>
 </body>
 </html>
